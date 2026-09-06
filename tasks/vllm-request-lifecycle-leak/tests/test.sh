@@ -12,4 +12,13 @@ if [ -z "$python_bin" ]; then
   exit 1
 fi
 cd /workspace/repo
-exec "$python_bin" -I /tests/supervise_retention.py "$python_bin"
+# Harbor bind-mounts /tests from the host checkout, so these scripts carry the
+# host user's ownership: root where the checkout is root-owned, but uid 1001 on
+# GitHub Actions runners. The supervisor requires root-owned, non-writable
+# scripts, so stage a private root-owned copy instead of trusting the mount.
+stage=/opt/ai-infra-verifier
+install -d -m 0755 -o 0 -g 0 "$stage"
+install -m 0644 -o 0 -g 0 \
+  /tests/supervise_retention.py /tests/verify_retention.py "$stage/"
+
+exec "$python_bin" -I "$stage/supervise_retention.py" "$python_bin"

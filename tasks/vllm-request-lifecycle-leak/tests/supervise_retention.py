@@ -14,7 +14,9 @@ from pathlib import Path
 
 
 REWARD = Path("/logs/verifier/reward.txt")
-WORKER = Path("/tests/verify_retention.py")
+# Resolved next to this script so the worker follows it when test.sh stages
+# a root-owned copy outside the read-only /tests mount.
+WORKER = Path(__file__).resolve().parent / "verify_retention.py"
 RESULT_PREFIX = "AI_INFRA_OBSERVATION="
 CASES = (
     "candidate_source",
@@ -74,11 +76,16 @@ def prepare_reward() -> None:
     write_reward(0, exclusive=True)
 
 
-def trusted_file(path: Path) -> bool:
+def untrusted_reason(path: Path) -> str | None:
+    """Return why *path* is not trusted, or None when it is."""
     info = path.stat()
-    return info.st_uid == 0 and stat.S_ISREG(info.st_mode) and not (
-        info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
-    )
+    if info.st_uid != 0:
+        return f"{path} is owned by uid {info.st_uid}, not root"
+    if not stat.S_ISREG(info.st_mode):
+        return f"{path} is not a regular file"
+    if info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        return f"{path} is group/other writable (mode {stat.S_IMODE(info.st_mode):04o})"
+    return None
 
 
 def observation_passes(case: str, value: object) -> tuple[bool, str]:
@@ -173,12 +180,14 @@ def main() -> int:
     # interpreter retains its prefix; separately validate its resolved target.
     python_bin = Path(sys.argv[1])
     python_target = python_bin.resolve()
-    if not all(
-        trusted_file(path)
-        for path in (python_bin, python_target, Path(__file__).resolve(), WORKER)
-    ):
-        print("FAIL: verifier executable or scripts are not root-owned/read-only")
-        return 0
+    for path in (python_bin, python_target, Path(__file__).resolve(), WORKER):
+        reason = untrusted_reason(path)
+        if reason is not None:
+            print(
+                "FAIL: verifier executable or scripts are not "
+                f"root-owned/read-only: {reason}"
+            )
+            return 0
     agent = pwd.getpwnam("agent")
     completed: list[str] = []
     for case in CASES:
