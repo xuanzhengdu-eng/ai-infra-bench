@@ -49,13 +49,19 @@ def prepare_reward() -> None:
     try:
         info = directory.lstat()
     except FileNotFoundError:
-        directory.mkdir(parents=True, mode=0o700)
+        directory.mkdir(parents=True, mode=0o755)
     else:
         if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
             directory.unlink()
-            directory.mkdir(parents=True, mode=0o700)
+            directory.mkdir(parents=True, mode=0o755)
+    # Mode 0755, not 0700: Harbor bind-mounts /logs from the host and stats
+    # verifier/reward.json from outside the container, where it may run as an
+    # unprivileged user, so the directory has to stay traversable. This costs
+    # nothing: the directory is root-owned with no group or other write bit, so
+    # candidate code still cannot create, rename, unlink, symlink over or
+    # rmtree anything inside it, and reward.txt stays root:root 0600.
     os.chown(directory, 0, 0)
-    directory.chmod(0o700)
+    directory.chmod(0o755)
     try:
         REWARD.unlink()
     except FileNotFoundError:
