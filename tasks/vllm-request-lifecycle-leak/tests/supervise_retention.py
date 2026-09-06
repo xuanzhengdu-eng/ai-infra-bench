@@ -34,10 +34,10 @@ CASES = (
 def write_reward(value: int, *, exclusive: bool = False) -> None:
     flags = os.O_WRONLY | os.O_NOFOLLOW | os.O_CREAT
     flags |= os.O_EXCL if exclusive else os.O_TRUNC
-    descriptor = os.open(REWARD, flags, 0o600)
+    descriptor = os.open(REWARD, flags, 0o644)
     try:
         os.fchown(descriptor, 0, 0)
-        os.fchmod(descriptor, 0o600)
+        os.fchmod(descriptor, 0o644)
         os.write(descriptor, f"{value}\n".encode())
         os.fsync(descriptor)
     finally:
@@ -54,12 +54,17 @@ def prepare_reward() -> None:
         if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
             directory.unlink()
             directory.mkdir(parents=True, mode=0o755)
-    # Mode 0755, not 0700: Harbor bind-mounts /logs from the host and stats
-    # verifier/reward.json from outside the container, where it may run as an
-    # unprivileged user, so the directory has to stay traversable. This costs
-    # nothing: the directory is root-owned with no group or other write bit, so
-    # candidate code still cannot create, rename, unlink, symlink over or
-    # rmtree anything inside it, and reward.txt stays root:root 0600.
+    # Mode 0755, not 0700: Harbor bind-mounts /logs from the host and reads
+    # verifier/reward.txt from outside the container, where it runs as an
+    # unprivileged user (uid 1001 on GitHub runners), so the directory has to
+    # stay traversable and the reward file world-readable -- Harbor's
+    # _parse_reward_text does stat() then read_text(), and a 0600 file makes the
+    # read raise PermissionError even though the stat succeeds. This costs
+    # nothing: both are root-owned with no group or other write bit, so
+    # candidate code still cannot create, rename, unlink, symlink over,
+    # hardlink, chmod, chown or rmtree anything here. Read access is harmless
+    # because the candidate runs in a separate container that never mounts
+    # /logs, and every write path below rewrites the file unconditionally.
     os.chown(directory, 0, 0)
     directory.chmod(0o755)
     try:
